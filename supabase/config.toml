@@ -1,0 +1,28 @@
+project_id = "ocohbiwrrdkoeevipbmx"
+
+[functions.analyze-item]
+verify_jwt = false
+
+[functions.analyze-lot]
+verify_jwt = false
+
+[functions.assistant-chat]
+verify_jwt = false
+
+[functions.live-scan]
+verify_jwt = false
+
+[functions.optimize-listing]
+verify_jwt = false
+
+[functions.pricing-strategy]
+verify_jwt = false
+
+[functions.refine-pricing]
+verify_jwt = false
+
+[functions.scrape-marketplace]
+verify_jwt = false
+
+[functions.vision-plus]
+verify_jwt = false
