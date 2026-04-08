@@ -1,4 +1,5 @@
 import { DOMParser } from "https://deno.land/x/deno_dom/deno-dom-wasm.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -37,6 +38,14 @@ class MarketplaceScrapeError extends Error {
 const sanitizeSearchQuery = (value: unknown) => {
   if (typeof value !== "string") return "";
   return value.trim().replace(/\s+/g, " ").slice(0, 200);
+};
+
+const hashQuery = async (query: string): Promise<string> => {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(query);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
 };
 
 const parseMarketPrice = (value: string | null | undefined) => {
@@ -189,6 +198,30 @@ Deno.serve(async (req) => {
       );
     }
 
+    // --- CACHE LOOKUP ---
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+      { auth: { persistSession: false } },
+    );
+
+    const queryHash = await hashQuery(normalizedSearchQuery);
+
+    const { data: cached } = await supabase
+      .from("marketplace_cache")
+      .select("results_json")
+      .eq("query_hash", queryHash)
+      .gt("expires_at", new Date().toISOString())
+      .maybeSingle();
+
+    if (cached?.results_json) {
+      return new Response(
+        JSON.stringify({ ...cached.results_json, cached: true }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
+    // --- SCRAPINGBEE CALL ---
     const ebayUrl = `https://www.ebay.com.au/sch/i.html?_nkw=${encodeURIComponent(
       normalizedSearchQuery,
     )}&_LH_Sold=1&_LH_Complete=1`;
@@ -217,17 +250,33 @@ Deno.serve(async (req) => {
       listingsCount: allVerifiedComparables.length,
     };
 
+    const payload = {
+      success: true,
+      connector: "scrapingbee",
+      query: normalizedSearchQuery,
+      verified_prices: verifiedPrices,
+      sold_comparables: soldComparables,
+      listings: soldComparables,
+      stats,
+      sample_count: soldComparables.length,
+    };
+
+    // --- CACHE WRITE (fire-and-forget, don't block the response) ---
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    supabase
+      .from("marketplace_cache")
+      .upsert({
+        query_hash: queryHash,
+        results_json: payload,
+        search_query: normalizedSearchQuery,
+        expires_at: expiresAt,
+      })
+      .then(({ error }) => {
+        if (error) console.error("[cache-write]", error.message);
+      });
+
     return new Response(
-      JSON.stringify({
-        success: true,
-        connector: "scrapingbee",
-        query: normalizedSearchQuery,
-        verified_prices: verifiedPrices,
-        sold_comparables: soldComparables,
-        listings: soldComparables,
-        stats,
-        sample_count: soldComparables.length,
-      }),
+      JSON.stringify(payload),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (error) {
