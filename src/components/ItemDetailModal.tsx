@@ -26,10 +26,11 @@ import {
   Barcode,
 } from "lucide-react";
 import type { Tables } from "@/integrations/supabase/types";
+import type { MarketReport } from "@/lib/types";
 
 interface ItemDetailModalProps {
   item: Tables<"items">;
-  marketReport?: Tables<"market_reports"> | null;
+  marketReport?: MarketReport | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onUpdate: () => void;

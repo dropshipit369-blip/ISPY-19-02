@@ -97,7 +97,7 @@ export default function Listings() {
       const { data: itemsData, error: itemsError } = await supabase
         .from("items")
         .select("*")
-        .eq("user_id", user?.id)
+        .eq("user_id", user!.id)
         .in("status", ["pending", "listed"])
         .order("created_at", { ascending: false });
 
@@ -131,7 +131,7 @@ export default function Listings() {
           // Update items with suggested prices
           setItems(prev => prev.map(item => ({
             ...item,
-            listingPrice: reportsMap[item.id]?.suggested_price || reportsMap[item.id]?.median_price || item.purchase_price,
+            listingPrice: reportsMap[item.id]?.suggested_price ?? reportsMap[item.id]?.median_price ?? item.purchase_price ?? undefined,
             listingTitle: reportsMap[item.id]?.suggested_title || item.title || "",
             listingDescription: reportsMap[item.id]?.suggested_description || "",
           })));

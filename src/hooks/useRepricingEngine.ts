@@ -88,13 +88,13 @@ const CONDITION_MODIFIERS: Record<StandardCondition, {
 /* ───────────────── REPRICING ENGINE HOOK ───────────────── */
 
 interface UseRepricingEngineProps {
-  baseLowPrice: number;
-  baseMedianPrice: number;
-  baseHighPrice: number;
-  baseConfidence?: number;
-  authenticityScore?: number;
-  volatilityScore?: number;
-  platformFeeRate?: number;
+  baseLowPrice: number | null | undefined;
+  baseMedianPrice: number | null | undefined;
+  baseHighPrice: number | null | undefined;
+  baseConfidence?: number | null | undefined;
+  authenticityScore?: number | null | undefined;
+  volatilityScore?: number | null | undefined;
+  platformFeeRate?: number | null | undefined;
 }
 
 export function useRepricingEngine({
@@ -106,53 +106,53 @@ export function useRepricingEngine({
   volatilityScore = 30,
   platformFeeRate = 0.13,
 }: UseRepricingEngineProps) {
+  // Coerce nulls/undefined to 0 so calculations are always numeric
+  const safeBaseLow = baseLowPrice ?? 0;
+  const safeBaseMedian = baseMedianPrice ?? 0;
+  const safeBaseHigh = baseHighPrice ?? 0;
+  const safeConfidence = baseConfidence ?? 75;
+  const safeAuthenticity = authenticityScore ?? 85;
+  const safeVolatility = volatilityScore ?? 30;
+  const safePlatformFee = platformFeeRate ?? 0.13;
+
   const [condition, setCondition] = useState<StandardCondition>('good');
 
   const calculateRepricing = useCallback((selectedCondition: StandardCondition): RepricingResult => {
     const modifier = CONDITION_MODIFIERS[selectedCondition];
-    
-    // Adjust prices based on condition
-    const adjustedLow = Math.round(baseLowPrice * modifier.multiplier);
-    const adjustedMedian = Math.round(baseMedianPrice * modifier.multiplier);
-    const adjustedHigh = Math.round(baseHighPrice * modifier.multiplier);
-    
-    // Calculate percentage change from base
+
+    const adjustedLow = Math.round(safeBaseLow * modifier.multiplier);
+    const adjustedMedian = Math.round(safeBaseMedian * modifier.multiplier);
+    const adjustedHigh = Math.round(safeBaseHigh * modifier.multiplier);
+
     const percentageChange = Math.round((modifier.multiplier - 1) * 100);
-    
-    // Calculate buy-under price (60% of low to ensure profit margin)
     const buyUnder = Math.round(adjustedLow * 0.6);
-    
-    // Calculate platform fees on median
-    const platformFees = Math.round(adjustedMedian * platformFeeRate);
-    
-    // Calculate profit range
+    const platformFees = Math.round(adjustedMedian * safePlatformFee);
+
     const profitLow = adjustedLow - buyUnder - platformFees;
     const profitHigh = adjustedHigh - buyUnder - platformFees;
-    
-    // Determine risk level based on condition and confidence
-    const combinedRisk = (modifier.riskFactor * 0.5) + ((100 - baseConfidence) / 100 * 0.5);
-    const riskLevel: 'low' | 'medium' | 'high' = 
-      combinedRisk < 0.3 ? 'low' : 
+
+    const combinedRisk = (modifier.riskFactor * 0.5) + ((100 - safeConfidence) / 100 * 0.5);
+    const riskLevel: 'low' | 'medium' | 'high' =
+      combinedRisk < 0.3 ? 'low' :
       combinedRisk < 0.6 ? 'medium' : 'high';
-    
-    // Build confidence profile
-    const conditionConfidence = Math.round(baseConfidence * (1 - modifier.riskFactor * 0.3));
+
+    const conditionConfidence = Math.round(safeConfidence * (1 - modifier.riskFactor * 0.3));
     const confidenceProfile: ConfidenceProfile = {
-      authenticityLikelihood: authenticityScore,
+      authenticityLikelihood: safeAuthenticity,
       conditionConfidence,
-      marketVolatilityScore: volatilityScore,
+      marketVolatilityScore: safeVolatility,
       recommendedPricingBand: {
         floor: adjustedLow,
         ceiling: adjustedHigh,
         optimal: adjustedMedian,
       },
     };
-    
+
     return {
       originalPrices: {
-        low: baseLowPrice,
-        median: baseMedianPrice,
-        high: baseHighPrice,
+        low: safeBaseLow,
+        median: safeBaseMedian,
+        high: safeBaseHigh,
       },
       adjustedPrices: {
         low: adjustedLow,
@@ -170,7 +170,7 @@ export function useRepricingEngine({
       platformFees,
       confidenceProfile,
     };
-  }, [baseLowPrice, baseMedianPrice, baseHighPrice, baseConfidence, authenticityScore, volatilityScore, platformFeeRate]);
+  }, [safeBaseLow, safeBaseMedian, safeBaseHigh, safeConfidence, safeAuthenticity, safeVolatility, safePlatformFee]);
 
   const repricingResult = useMemo(() => calculateRepricing(condition), [condition, calculateRepricing]);
 

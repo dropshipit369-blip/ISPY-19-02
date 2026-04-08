@@ -51,6 +51,12 @@ export function useSubscription() {
         return;
       }
 
+      if (!data) {
+        console.error("No data returned from check-subscription");
+        setStatus(prev => ({ ...prev, loading: false }));
+        return;
+      }
+
       setStatus({
         subscribed: data.subscribed,
         planType: data.plan_type || "free",

@@ -66,7 +66,7 @@ export function BarcodeScanner({ onBarcodeDetected, onClose }: BarcodeScannerPro
       return canvas.toDataURL("image/jpeg", 0.9);
     };
 
-    const handleDetected = (result: { codeResult?: { code?: string; format?: string } }) => {
+    const handleDetected = (result: { codeResult?: { code?: string | null; format?: string } }) => {
       if (hasDetectedRef.current) return;
       if (!result.codeResult?.code) return;
 

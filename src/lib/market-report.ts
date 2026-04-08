@@ -1,3 +1,4 @@
+import type { Json } from '@/integrations/supabase/types';
 import type { MarketReport, MarketReportDraft, SoldComparable } from '@/lib/types';
 
 type MarketReportLike = MarketReport | MarketReportDraft;
@@ -59,7 +60,7 @@ export function buildMarketReportInsertPayload(
     suggested_keywords: hasVerifiedData ? marketReport.suggested_keywords || null : null,
     shipping_recommendation: hasVerifiedData ? marketReport.shipping_recommendation || null : null,
     data_sources: hasVerifiedData ? marketReport.data_sources || {} : {},
-    sold_comparables: hasVerifiedData ? marketReport.sold_comparables || [] : [],
+    sold_comparables: (hasVerifiedData ? marketReport.sold_comparables || [] : []) as unknown as Json,
     verification_status: hasVerifiedData ? 'verified' : 'manual_required',
     verification_source: hasVerifiedData ? marketReport.verification_source || null : null,
     verification_message: hasVerifiedData ? null : getMarketVerificationMessage(marketReport),

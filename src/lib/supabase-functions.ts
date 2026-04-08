@@ -3,7 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 
 export async function invokeSupabaseFunction<TData = unknown>(
   functionName: string,
-  body?: unknown,
+  body?: Record<string, unknown>,
 ) {
   const {
     data: { session },

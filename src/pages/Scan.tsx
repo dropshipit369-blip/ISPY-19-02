@@ -448,6 +448,7 @@ export default function Scan() {
       const { data, error } = await invokeSupabaseFunction<{ items: LotItem[]; totalItems: number }>("analyze-lot", { image: imageData });
 
       if (error) throw error;
+      if (!data) throw new Error("No data returned from analyze-lot");
 
       const items = data.items || [];
       let savedCount = 0;
@@ -562,13 +563,13 @@ export default function Scan() {
       setStrategy((prev) => ({
         ...prev,
         ...data.strategy,
-        deepAnalysis: data.strategy.deepAnalysis || prev?.deepAnalysis,
-      }));
+        deepAnalysis: data.strategy!.deepAnalysis || prev?.deepAnalysis,
+      } as PricingStrategy));
       setStrategyChat((prev) => [
         ...prev,
         {
           role: "assistant",
-          text: data.strategy.reasoning || "Strategy updated.",
+          text: data.strategy?.reasoning || "Strategy updated.",
           timestamp: Date.now(),
         },
       ]);
@@ -708,6 +709,7 @@ export default function Scan() {
       });
 
       if (error) throw error;
+      if (!data) throw new Error("No data returned from analyze-item");
 
       setAnalysis(data.analysis);
       setMarketReport(data.marketReport);

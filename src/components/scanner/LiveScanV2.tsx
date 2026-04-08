@@ -420,7 +420,7 @@ export function LiveScanV2({ onClose, userId }: LiveScanV2Props) {
         setItems((prev) => {
           const next = { ...prev };
 
-          data.items.forEach((serverItem: any) => {
+          (data.items ?? []).forEach((serverItem: any) => {
             const serverBox: Box = {
               x: serverItem.boundingBox?.x ?? 0.1,
               y: serverItem.boundingBox?.y ?? 0.1,
@@ -604,8 +604,8 @@ export function LiveScanV2({ onClose, userId }: LiveScanV2Props) {
         const vBox: Box = {
           x: vItem.boundingBox.x,
           y: vItem.boundingBox.y,
-          w: vItem.boundingBox.width,
-          h: vItem.boundingBox.height,
+          w: vItem.boundingBox.w,
+          h: vItem.boundingBox.h,
         };
 
         let bestMatch: string | null = null;
@@ -953,7 +953,7 @@ export function LiveScanV2({ onClose, userId }: LiveScanV2Props) {
           suggested_price: hasVerifiedPricing ? item.price || null : null,
           price_trend: hasVerifiedPricing ? item.trend || null : null,
           data_sources: hasVerifiedPricing
-            ? { ebay: { listings: item.pricingSources.length, avgPrice: item.price } }
+            ? { ebay: { listings: item.pricingSources?.length ?? 0, avgPrice: item.price } }
             : {},
           sold_comparables: hasVerifiedPricing ? soldComparables : [],
           verification_status: hasVerifiedPricing ? 'verified' : 'manual_required',

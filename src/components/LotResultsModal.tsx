@@ -444,8 +444,8 @@ export function LotResultsModal({
               model: items[feedbackIndex].analysis.model,
               category: items[feedbackIndex].analysis.category,
               condition: items[feedbackIndex].analysis.condition,
-              lowPrice: items[feedbackIndex].marketReport?.low_price,
-              highPrice: items[feedbackIndex].marketReport?.high_price,
+              lowPrice: items[feedbackIndex].marketReport?.low_price ?? undefined,
+              highPrice: items[feedbackIndex].marketReport?.high_price ?? undefined,
             }}
             userId={userId}
           />

@@ -3,6 +3,15 @@ import { getQueue, dequeueAction } from '@/lib/offlineDB';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 
+export interface SyncStatus {
+  isOnline: boolean;
+  isSyncing: boolean;
+  pendingCount: number;
+  lastError: string | null;
+  lastSyncTime: number | null;
+  isReady: boolean;
+}
+
 export function useOfflineSync() {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -20,7 +29,7 @@ export function useOfflineSync() {
       for (const item of queue) {
         if (!item.id) continue;
         if (item.action === 'ADD_INVENTORY') {
-          const { error } = await supabase.from('Inventory').insert(item.payload);
+          const { error } = await supabase.from('items').insert(item.payload);
           if (!error) { await dequeueAction(item.id); successCount++; }
         }
       }
