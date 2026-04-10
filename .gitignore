@@ -30,5 +30,3 @@ dist-ssr
 .env*.local
 .env.vercel.*
 supabase/.temp/
-
-.vercel
