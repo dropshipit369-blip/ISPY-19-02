@@ -668,12 +668,24 @@ async function callAI(
       console.log(`Gemini Response Status: ${response.status}`);
 
       if (!response.ok) {
-        console.error(`Gemini API Error: ${responseText.substring(0, 500)}`);
+        console.error(`Gemini API Error (${response.status}): ${responseText.substring(0, 500)}`);
 
         // If the schema-constrained request fails, retry WITHOUT response_schema
         if (response.status === 400 && responseText.includes("schema")) {
           console.log("Schema-constrained request failed, retrying without schema...");
           return await callAIWithoutSchema(apiKey, imageUrl, additionalContext, learningContext);
+        }
+
+        // For 503/529 (overloaded), use longer backoff before retry
+        if (response.status === 503 || response.status === 529) {
+          console.log(`Gemini overloaded (${response.status}), will retry with backoff...`);
+          throw new Error(`AI service temporarily unavailable (${response.status})`);
+        }
+
+        // For 429 (rate limit), flag for retry
+        if (response.status === 429) {
+          console.log("Gemini rate limited (429), will retry with backoff...");
+          throw new Error(`AI service rate limited (429)`);
         }
 
         throw new Error(`Gemini API returned ${response.status}`);
@@ -717,9 +729,13 @@ async function callAI(
 
       return clampMarketValues(normalised);
     } catch (err) {
-      console.error(`Attempt ${attempt + 1} failed:`, err instanceof Error ? err.message : String(err));
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.error(`Attempt ${attempt + 1} failed:`, errMsg);
       if (attempt === retries - 1) throw err;
-      await new Promise((r) => setTimeout(r, 1200 * (attempt + 1)));
+      // Longer backoff for overloaded/rate-limited responses
+      const isOverloaded = errMsg.includes("503") || errMsg.includes("529") || errMsg.includes("429");
+      const baseDelay = isOverloaded ? 3000 : 1200;
+      await new Promise((r) => setTimeout(r, baseDelay * (attempt + 1)));
     }
   }
 
@@ -978,8 +994,10 @@ Deno.serve(async (req) => {
       userMessage = "The AI service returned an unexpected response. Please try again.";
     } else if (errorMsg.includes("SAFETY")) {
       userMessage = "This image couldn't be processed. Please try a different photo.";
-    } else if (errorMsg.includes("429") || errorMsg.includes("quota")) {
+    } else if (errorMsg.includes("429") || errorMsg.includes("quota") || errorMsg.includes("rate limited")) {
       userMessage = "AI service is temporarily busy. Please wait a moment and try again.";
+    } else if (errorMsg.includes("503") || errorMsg.includes("529") || errorMsg.includes("unavailable")) {
+      userMessage = "AI service is temporarily overloaded. Please wait 30 seconds and try again.";
     }
 
     return new Response(
