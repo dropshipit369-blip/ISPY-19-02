@@ -88,9 +88,9 @@ const CONDITION_MODIFIERS: Record<StandardCondition, {
 /* ───────────────── REPRICING ENGINE HOOK ───────────────── */
 
 interface UseRepricingEngineProps {
-  baseLowPrice: number;
-  baseMedianPrice: number;
-  baseHighPrice: number;
+  baseLowPrice: number | null | undefined;
+  baseMedianPrice: number | null | undefined;
+  baseHighPrice: number | null | undefined;
   baseConfidence?: number;
   authenticityScore?: number;
   volatilityScore?: number;
@@ -110,11 +110,16 @@ export function useRepricingEngine({
 
   const calculateRepricing = useCallback((selectedCondition: StandardCondition): RepricingResult => {
     const modifier = CONDITION_MODIFIERS[selectedCondition];
-    
+
+    // Null-safe base prices
+    const safeLow = baseLowPrice ?? 0;
+    const safeMedian = baseMedianPrice ?? 0;
+    const safeHigh = baseHighPrice ?? 0;
+
     // Adjust prices based on condition
-    const adjustedLow = Math.round(baseLowPrice * modifier.multiplier);
-    const adjustedMedian = Math.round(baseMedianPrice * modifier.multiplier);
-    const adjustedHigh = Math.round(baseHighPrice * modifier.multiplier);
+    const adjustedLow = Math.round(safeLow * modifier.multiplier);
+    const adjustedMedian = Math.round(safeMedian * modifier.multiplier);
+    const adjustedHigh = Math.round(safeHigh * modifier.multiplier);
     
     // Calculate percentage change from base
     const percentageChange = Math.round((modifier.multiplier - 1) * 100);
@@ -150,9 +155,9 @@ export function useRepricingEngine({
     
     return {
       originalPrices: {
-        low: baseLowPrice,
-        median: baseMedianPrice,
-        high: baseHighPrice,
+        low: safeLow,
+        median: safeMedian,
+        high: safeHigh,
       },
       adjustedPrices: {
         low: adjustedLow,

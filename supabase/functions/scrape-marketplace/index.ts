@@ -1,4 +1,5 @@
 import { DOMParser } from "https://deno.land/x/deno_dom/deno-dom-wasm.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -163,6 +164,14 @@ const extractVerifiedComparables = (html: string) => {
   return comparables;
 };
 
+const hashQuery = async (query: string): Promise<string> => {
+  const msgBuffer = new TextEncoder().encode(query);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", msgBuffer);
+  return Array.from(new Uint8Array(hashBuffer))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+};
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -177,6 +186,29 @@ Deno.serve(async (req) => {
         "A non-empty searchQuery is required.",
         "invalid_input",
         400,
+      );
+    }
+
+    // SHA-256 hash the query for cache key
+    const queryHash = await hashQuery(normalizedSearchQuery);
+
+    // Check cache
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+    );
+
+    const { data: cached } = await supabase
+      .from("marketplace_cache")
+      .select("results_json")
+      .eq("query_hash", queryHash)
+      .gt("expires_at", new Date().toISOString())
+      .maybeSingle();
+
+    if (cached) {
+      return new Response(
+        JSON.stringify({ ...cached.results_json, cached: true }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 
@@ -217,17 +249,27 @@ Deno.serve(async (req) => {
       listingsCount: allVerifiedComparables.length,
     };
 
+    const resultsPayload = {
+      success: true,
+      connector: "scrapingbee",
+      query: normalizedSearchQuery,
+      verified_prices: verifiedPrices,
+      sold_comparables: soldComparables,
+      listings: soldComparables,
+      stats,
+      sample_count: soldComparables.length,
+    };
+
+    // Upsert into cache — fire and forget, don't block response
+    supabase.from("marketplace_cache").upsert({
+      query_hash: queryHash,
+      search_query: normalizedSearchQuery,
+      results_json: resultsPayload,
+      expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+    }).then(() => {}).catch(() => {});
+
     return new Response(
-      JSON.stringify({
-        success: true,
-        connector: "scrapingbee",
-        query: normalizedSearchQuery,
-        verified_prices: verifiedPrices,
-        sold_comparables: soldComparables,
-        listings: soldComparables,
-        stats,
-        sample_count: soldComparables.length,
-      }),
+      JSON.stringify(resultsPayload),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (error) {
