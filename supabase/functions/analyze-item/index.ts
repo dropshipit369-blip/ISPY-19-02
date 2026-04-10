@@ -827,6 +827,85 @@ async function callAIWithoutSchema(
   return clampMarketValues(normalised);
 }
 
+/**
+ * Fallback: call via OpenRouter when Gemini direct is unavailable.
+ * Uses the same model (gemini-2.0-flash) through OpenRouter's paid infra,
+ * which avoids Google's free-tier rate limits.
+ */
+async function callAIViaOpenRouter(
+  openRouterKey: string,
+  imageUrl: string,
+  additionalContext?: string,
+  learningContext?: string,
+): Promise<AnalysisResult> {
+  console.log("Attempting OpenRouter fallback (google/gemini-2.0-flash-001)...");
+  const systemPrompt = getVerifiedSystemPrompt(additionalContext, learningContext) +
+    `\n\nReturn ONLY valid JSON (no markdown). Use this exact structure:
+{"title":"...", "brand":"...", "model":"...", "category":"...", "color":"...", "condition":"Good", "conditionScore":7, "extractedText":"...", "barcode":null, "marketReport":{"lowPrice":0, "medianPrice":0, "highPrice":0, "avgDaysToSell":14, "priceTrend":"stable", "trendPercentage":0, "confidenceScore":50, "bestMarketplace":"eBay", "suggestedPrice":0, "listingType":"fixed", "bestDayToList":"Sunday", "suggestedTitle":"...", "suggestedDescription":"...", "suggestedKeywords":[], "shippingRecommendation":"Standard shipping", "soldComparables":[], "dataSources":{"ebay":null, "amazon":null, "etsy":null}}}`;
+
+  // Build the image content part for OpenRouter (OpenAI-compatible format)
+  let imageContent: Record<string, unknown>;
+  if (imageUrl.startsWith("data:")) {
+    imageContent = { type: "image_url", image_url: { url: imageUrl } };
+  } else {
+    imageContent = { type: "image_url", image_url: { url: imageUrl } };
+  }
+
+  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${openRouterKey}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": "https://ispy-ai.vercel.app",
+      "X-Title": "iSpy Profit Tool",
+    },
+    body: JSON.stringify({
+      model: "google/gemini-2.0-flash-001",
+      messages: [
+        { role: "system", content: systemPrompt },
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "Analyze this item for resale pricing and identification. Return ONLY valid JSON." },
+            imageContent,
+          ],
+        },
+      ],
+      max_tokens: 2048,
+      temperature: 0.4,
+    }),
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    console.error(`OpenRouter API Error (${response.status}): ${errText.substring(0, 500)}`);
+    throw new Error(`OpenRouter fallback failed (${response.status})`);
+  }
+
+  const data = await response.json();
+  const content = data.choices?.[0]?.message?.content;
+  if (!content) throw new Error("Empty response from OpenRouter fallback");
+
+  console.log("Got content from OpenRouter, parsing...");
+
+  let parsed: unknown;
+  try {
+    let jsonStr = content;
+    const fenced = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (fenced) jsonStr = fenced[1];
+    parsed = JSON.parse(jsonStr);
+  } catch {
+    throw new Error("OpenRouter returned invalid JSON");
+  }
+
+  const normalised = normaliseAnalysis(parsed);
+  if (!normalised) {
+    throw new Error("OpenRouter returned incomplete analysis");
+  }
+
+  return clampMarketValues(normalised);
+}
+
 /* =========================
    HTTP Handler
 ========================= */
@@ -911,8 +990,24 @@ Deno.serve(async (req) => {
 
     // Get cached learning context (non-blocking refresh)
     const learningContext = getLearningContext();
+    const openRouterKey = Deno.env.get("OPENROUTER_API_KEY");
 
-    let result = await callAI(apiKey, imageData, safeContext, learningContext);
+    let result: AnalysisResult;
+    try {
+      result = await callAI(apiKey, imageData, safeContext, learningContext);
+    } catch (geminiError) {
+      const geminiMsg = geminiError instanceof Error ? geminiError.message : String(geminiError);
+      console.warn(`Gemini direct failed: ${geminiMsg}`);
+
+      // Fallback to OpenRouter if available
+      if (openRouterKey) {
+        console.log("Falling back to OpenRouter...");
+        result = await callAIViaOpenRouter(openRouterKey, imageData, safeContext, learningContext);
+      } else {
+        console.error("No OPENROUTER_API_KEY set — cannot fallback. Re-throwing Gemini error.");
+        throw geminiError;
+      }
+    }
     const marketSearchQuery = buildMarketplaceSearchQuery(result);
     let verificationStatus: "verified" | "manual_required" = "manual_required";
     let verificationSource: string | null = null;
