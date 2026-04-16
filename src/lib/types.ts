@@ -132,3 +132,109 @@ export interface AnalysisResult {
     verifiedCompsCount?: number | null;
   };
 }
+
+// === eBay Listing Types (Smart Clipboard approach) ===
+
+export interface EbayShippingConfig {
+  domestic: { service: string; cost: number; free: boolean };
+  international?: { service: string; cost: number; locations: string[] } | null;
+}
+
+export interface EbayReturnPolicy {
+  accepted: boolean;
+  period: string;
+  refund_method: string;
+}
+
+export interface ListingDraft {
+  id: string;
+  user_id: string;
+  item_id: string | null;
+  template_id: string | null;
+  platform: string;
+  status: 'draft' | 'review' | 'copied' | 'published' | 'failed' | 'ended';
+  title: string;
+  description: string | null;
+  category_id: string | null;
+  category_name: string | null;
+  condition_id: string | null;
+  condition_description: string | null;
+  price: number;
+  currency: string;
+  quantity: number;
+  listing_format: 'FIXED_PRICE' | 'AUCTION';
+  auction_start_price: number | null;
+  auction_reserve_price: number | null;
+  duration: string | null;
+  photos: string[];
+  item_specifics: Record<string, string>;
+  shipping: EbayShippingConfig;
+  return_policy: EbayReturnPolicy;
+  location: string | null;
+  postcode: string | null;
+  copied_at: string | null;
+  ebay_sell_page_opened: boolean;
+  ai_generated: boolean;
+  ai_model: string | null;
+  ai_generation_params: Record<string, unknown> | null;
+  error_message: string | null;
+  retry_count: number;
+  created_at: string;
+  updated_at: string;
+  published_at: string | null;
+}
+
+export interface ListingTemplate {
+  id: string;
+  user_id: string;
+  name: string;
+  platform: string;
+  category_id: string | null;
+  category_name: string | null;
+  description_template: string | null;
+  default_condition_id: string | null;
+  default_shipping: EbayShippingConfig;
+  item_specifics_template: Record<string, string>;
+  default_return_policy: EbayReturnPolicy;
+  is_default: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Listing {
+  id: string;
+  user_id: string;
+  item_id: string | null;
+  draft_id: string | null;
+  platform: string;
+  status: 'active' | 'sold' | 'ended' | 'relisted';
+  listed_price: number | null;
+  sold_price: number | null;
+  fees_estimated: number | null;
+  profit_estimated: number | null;
+  profit_actual: number | null;
+  listed_at: string | null;
+  ended_at: string | null;
+  sold_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EbayCategoryCache {
+  id: string;
+  ebay_category_id: string;
+  category_name: string;
+  parent_category_id: string | null;
+  category_path: string | null;
+  level: number;
+  is_leaf: boolean;
+  item_specifics_schema: Record<string, unknown>;
+  marketplace_id: string;
+  last_synced_at: string;
+  created_at: string;
+}
+
+export interface ListingDraftWithItem extends ListingDraft {
+  item?: Item;
+  market_report?: MarketReport;
+}
