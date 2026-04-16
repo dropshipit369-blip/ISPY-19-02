@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { FeedbackWidget } from "@/components/FeedbackWidget";
 
 import { Link } from "react-router-dom";
@@ -31,9 +31,13 @@ import {
   CheckSquare,
   RefreshCw,
   Edit3,
+  Sparkles,
+  Loader2,
+  Send,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { useListingDraft } from "@/hooks/useListingDraft";
 import { toast } from "sonner";
 import type { Item, MarketReport } from "@/lib/types";
 
@@ -41,6 +45,10 @@ import { PageTransition } from "@/components/PageTransition";
 import { motion } from "framer-motion";
 import { downloadCsvFile } from "@/lib/download";
 import { formatAud, formatAudRange } from "@/lib/utils";
+
+import { ListingDraftEditor } from "@/components/listings/ListingDraftEditor";
+import { EbaySmartCopy } from "@/components/listings/EbaySmartCopy";
+import type { ListingDraftData } from "@/hooks/useListingDraft";
 
 interface ListingItem extends Item {
   selected: boolean;
@@ -67,24 +75,44 @@ const MARKETPLACE_EXPORTS = {
 type MarketplaceTarget = keyof typeof MARKETPLACE_EXPORTS;
 
 const EBAY_AU_CONDITIONS: Record<string, string> = {
-  "New": "1000",
+  New: "1000",
   "Like New": "1500",
-  "Excellent": "2000",
+  Excellent: "2000",
   "Very Good": "2500",
-  "Good": "3000",
-  "Acceptable": "4000",
+  Good: "3000",
+  Acceptable: "4000",
   "For Parts": "7000",
 };
 
 export default function Listings() {
   const { user } = useAuth();
+  const draftManager = useListingDraft();
+
   const [items, setItems] = useState<ListingItem[]>([]);
-  const [marketReports, setMarketReports] = useState<Record<string, MarketReport>>({});
+  const [marketReports, setMarketReports] = useState<
+    Record<string, MarketReport>
+  >({});
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [marketplaceTarget, setMarketplaceTarget] = useState<MarketplaceTarget>("ebay");
+  const [marketplaceTarget, setMarketplaceTarget] =
+    useState<MarketplaceTarget>("ebay");
+
+  // Draft editor state
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [currentDraft, setCurrentDraft] = useState<ListingDraftData | null>(
+    null,
+  );
+  const [currentItem, setCurrentItem] = useState<Item | null>(null);
+  const [currentMarketReport, setCurrentMarketReport] =
+    useState<MarketReport | null>(null);
+
+  // Smart copy state
+  const [smartCopyOpen, setSmartCopyOpen] = useState(false);
+  const [smartCopyDraft, setSmartCopyDraft] = useState<ListingDraftData | null>(
+    null,
+  );
 
   useEffect(() => {
     if (user) {
@@ -103,7 +131,7 @@ export default function Listings() {
 
       if (itemsError) throw itemsError;
 
-      const listingItems: ListingItem[] = (itemsData || []).map(item => ({
+      const listingItems: ListingItem[] = (itemsData || []).map((item) => ({
         ...item,
         selected: false,
         listingTitle: item.title || "",
@@ -115,7 +143,7 @@ export default function Listings() {
 
       // Fetch market reports for pricing suggestions
       if (itemsData && itemsData.length > 0) {
-        const itemIds = itemsData.map(i => i.id);
+        const itemIds = itemsData.map((i) => i.id);
         const { data: reportsData, error: reportsError } = await supabase
           .from("market_reports")
           .select("*")
@@ -123,18 +151,26 @@ export default function Listings() {
 
         if (!reportsError && reportsData) {
           const reportsMap: Record<string, MarketReport> = {};
-          reportsData.forEach(report => {
+          reportsData.forEach((report) => {
             reportsMap[report.item_id] = report as MarketReport;
           });
           setMarketReports(reportsMap);
 
           // Update items with suggested prices
-          setItems(prev => prev.map(item => ({
-            ...item,
-            listingPrice: reportsMap[item.id]?.suggested_price ?? reportsMap[item.id]?.median_price ?? item.purchase_price ?? undefined,
-            listingTitle: reportsMap[item.id]?.suggested_title || item.title || "",
-            listingDescription: reportsMap[item.id]?.suggested_description || "",
-          })));
+          setItems((prev) =>
+            prev.map((item) => ({
+              ...item,
+              listingPrice:
+                reportsMap[item.id]?.suggested_price ??
+                reportsMap[item.id]?.median_price ??
+                item.purchase_price ??
+                undefined,
+              listingTitle:
+                reportsMap[item.id]?.suggested_title || item.title || "",
+              listingDescription:
+                reportsMap[item.id]?.suggested_description || "",
+            })),
+          );
         }
       }
     } catch (error) {
@@ -145,7 +181,9 @@ export default function Listings() {
     }
   };
 
-  const categories = [...new Set(items.map((i) => i.category).filter(Boolean))];
+  const categories = [
+    ...new Set(items.map((i) => i.category).filter(Boolean)),
+  ];
 
   const filteredItems = items.filter((item) => {
     const matchesSearch =
@@ -157,29 +195,163 @@ export default function Listings() {
     return matchesSearch && matchesCategory;
   });
 
-  const selectedItems = items.filter(i => i.selected);
+  const selectedItems = items.filter((i) => i.selected);
   const selectedCount = selectedItems.length;
 
   const toggleSelectAll = () => {
-    const allSelected = filteredItems.every(i => i.selected);
-    setItems(prev => prev.map(item =>
-      filteredItems.some(f => f.id === item.id)
-        ? { ...item, selected: !allSelected }
-        : item
-    ));
+    const allSelected = filteredItems.every((i) => i.selected);
+    setItems((prev) =>
+      prev.map((item) =>
+        filteredItems.some((f) => f.id === item.id)
+          ? { ...item, selected: !allSelected }
+          : item,
+      ),
+    );
   };
 
   const toggleItem = (id: string) => {
-    setItems(prev => prev.map(item =>
-      item.id === id ? { ...item, selected: !item.selected } : item
-    ));
+    setItems((prev) =>
+      prev.map((item) =>
+        item.id === id ? { ...item, selected: !item.selected } : item,
+      ),
+    );
   };
 
-  const updateListingField = (id: string, field: keyof ListingItem, value: any) => {
-    setItems(prev => prev.map(item =>
-      item.id === id ? { ...item, [field]: value } : item
-    ));
+  const updateListingField = (
+    id: string,
+    field: keyof ListingItem,
+    value: any,
+  ) => {
+    setItems((prev) =>
+      prev.map((item) =>
+        item.id === id ? { ...item, [field]: value } : item,
+      ),
+    );
   };
+
+  // === AI LISTING GENERATION ===
+
+  const handleCreateDraft = useCallback(
+    async (item: Item) => {
+      const report = marketReports[item.id] ?? null;
+      const draft = await draftManager.generateDraft(item, report);
+
+      if (draft) {
+        setCurrentDraft(draft);
+        setCurrentItem(item);
+        setCurrentMarketReport(report);
+        setEditorOpen(true);
+      }
+    },
+    [marketReports, draftManager],
+  );
+
+  const handleSaveDraft = useCallback(
+    async (draft: ListingDraftData): Promise<string | null> => {
+      return draftManager.saveDraft(draft);
+    },
+    [draftManager],
+  );
+
+  const handlePublishFromEditor = useCallback(
+    async (draft: ListingDraftData) => {
+      // Save draft, then open smart copy flow
+      const id = await draftManager.saveDraft(draft);
+      if (id) {
+        const savedDraft = { ...draft, id };
+        setSmartCopyDraft(savedDraft);
+        setEditorOpen(false);
+        setSmartCopyOpen(true);
+      }
+    },
+    [draftManager],
+  );
+
+  const handleRegenerateDraftField = useCallback(
+    async (field: "title" | "description" | "all") => {
+      if (!currentDraft || !currentItem) return null;
+      return draftManager.regenerateField(
+        currentDraft,
+        field,
+        currentItem,
+        currentMarketReport,
+      );
+    },
+    [currentDraft, currentItem, currentMarketReport, draftManager],
+  );
+
+  const handleMarkListed = useCallback(
+    async (draft: ListingDraftData) => {
+      if (!draft.item_id) return;
+
+      try {
+        // Update item status to listed
+        await supabase
+          .from("items")
+          .update({ status: "listed" })
+          .eq("id", draft.item_id);
+
+        // Update draft status
+        if (draft.id) {
+          await draftManager.updateDraft(draft.id, { status: "published" });
+        }
+
+        toast.success("Marked as listed on eBay");
+        fetchData();
+      } catch (err) {
+        console.error("Error marking as listed:", err);
+      }
+    },
+    [draftManager],
+  );
+
+  // === BATCH: Generate + Smart Copy for first item ===
+
+  const handleBatchList = useCallback(async () => {
+    if (selectedCount === 0) {
+      toast.error("Select items first");
+      return;
+    }
+
+    // For single item, go straight to AI generation
+    if (selectedCount === 1) {
+      await handleCreateDraft(selectedItems[0] as Item);
+      return;
+    }
+
+    // For batch, generate all drafts then open smart copy for the first one
+    const itemsWithReports = selectedItems.map((item) => ({
+      item: item as Item,
+      marketReport: marketReports[item.id] ?? null,
+    }));
+
+    const drafts = await draftManager.generateBatchDrafts(itemsWithReports);
+
+    if (drafts.length > 0) {
+      // Save all drafts
+      for (const draft of drafts) {
+        await draftManager.saveDraft(draft);
+      }
+
+      // Open editor for the first one
+      setCurrentDraft(drafts[0]);
+      setCurrentItem(selectedItems[0] as Item);
+      setCurrentMarketReport(marketReports[selectedItems[0].id] ?? null);
+      setEditorOpen(true);
+
+      toast.success(
+        `Generated ${drafts.length} listings. Review each one, then copy to eBay.`,
+      );
+    }
+  }, [
+    selectedItems,
+    selectedCount,
+    marketReports,
+    draftManager,
+    handleCreateDraft,
+  ]);
+
+  // === CSV EXPORT (fallback) ===
 
   const generateMarketplaceCSV = async () => {
     if (selectedCount === 0) {
@@ -211,7 +383,8 @@ export default function Listings() {
             ],
             ...selectedItems.map((item) => {
               const report = marketReports[item.id];
-              const conditionId = EBAY_AU_CONDITIONS[item.condition || "Good"] || "3000";
+              const conditionId =
+                EBAY_AU_CONDITIONS[item.condition || "Good"] || "3000";
 
               return [
                 "Add",
@@ -220,8 +393,12 @@ export default function Listings() {
                   report?.suggested_description ||
                   `${item.brand || ""} ${item.model || ""} - ${item.condition || "Good"} condition`,
                 item.category || "",
-                item.listingPrice?.toFixed(2) || report?.suggested_price?.toFixed(2) || "0.00",
-                item.listingPrice?.toFixed(2) || report?.suggested_price?.toFixed(2) || "0.00",
+                item.listingPrice?.toFixed(2) ||
+                  report?.suggested_price?.toFixed(2) ||
+                  "0.00",
+                item.listingPrice?.toFixed(2) ||
+                  report?.suggested_price?.toFixed(2) ||
+                  "0.00",
                 "1",
                 "GTC",
                 "FixedPrice",
@@ -257,8 +434,12 @@ export default function Listings() {
                 item.id,
                 MARKETPLACE_EXPORTS[marketplaceTarget].label,
                 item.listingTitle || item.title || "",
-                item.listingDescription || report?.suggested_description || "",
-                item.listingPrice?.toFixed(2) || report?.suggested_price?.toFixed(2) || "0.00",
+                item.listingDescription ||
+                  report?.suggested_description ||
+                  "",
+                item.listingPrice?.toFixed(2) ||
+                  report?.suggested_price?.toFixed(2) ||
+                  "0.00",
                 item.category || "",
                 item.condition || "Good",
                 item.brand || "",
@@ -284,7 +465,7 @@ export default function Listings() {
     if (selectedCount === 0) return;
 
     try {
-      const ids = selectedItems.map(i => i.id);
+      const ids = selectedItems.map((i) => i.id);
       const { error } = await supabase
         .from("items")
         .update({ status: "listed" })
@@ -313,7 +494,7 @@ export default function Listings() {
             <div>
               <h1 className="text-3xl font-bold">Listings</h1>
               <p className="text-muted-foreground">
-                Create & export eBay listings from your inventory
+                AI-optimized listings for eBay, Facebook & Etsy
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -322,7 +503,9 @@ export default function Listings() {
                 onClick={() => fetchData()}
                 disabled={loading}
               >
-                <RefreshCw className={`w-4 h-4 mr-2 ${loading ? "animate-spin" : ""}`} />
+                <RefreshCw
+                  className={`w-4 h-4 mr-2 ${loading ? "animate-spin" : ""}`}
+                />
                 Refresh
               </Button>
             </div>
@@ -342,7 +525,10 @@ export default function Listings() {
                       className="pl-10"
                     />
                   </div>
-                  <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+                  <Select
+                    value={categoryFilter}
+                    onValueChange={setCategoryFilter}
+                  >
                     <SelectTrigger className="w-full sm:w-40">
                       <SelectValue placeholder="Category" />
                     </SelectTrigger>
@@ -355,22 +541,58 @@ export default function Listings() {
                       ))}
                     </SelectContent>
                   </Select>
-                  <Select value={marketplaceTarget} onValueChange={(value: MarketplaceTarget) => setMarketplaceTarget(value)}>
-                    <SelectTrigger className="w-full sm:w-52">
-                      <SelectValue placeholder="Marketplace" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="ebay">eBay</SelectItem>
-                      <SelectItem value="facebook">Facebook Marketplace</SelectItem>
-                      <SelectItem value="etsy">Etsy</SelectItem>
-                    </SelectContent>
-                  </Select>
                 </div>
 
-                <div className="flex items-center gap-2 w-full lg:w-auto">
+                <div className="flex items-center gap-2 w-full lg:w-auto flex-wrap">
                   <Badge variant="secondary" className="px-3 py-1">
                     {selectedCount} selected
                   </Badge>
+
+                  {/* Primary: AI List on eBay */}
+                  <Button
+                    variant="hero"
+                    size="sm"
+                    onClick={handleBatchList}
+                    disabled={
+                      selectedCount === 0 || draftManager.generating
+                    }
+                  >
+                    {draftManager.generating ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <Sparkles className="w-4 h-4 mr-2" />
+                    )}
+                    {draftManager.generating
+                      ? "Generating..."
+                      : "AI List on eBay"}
+                  </Button>
+
+                  {/* CSV Export (fallback) */}
+                  <Select
+                    value={marketplaceTarget}
+                    onValueChange={(value: MarketplaceTarget) =>
+                      setMarketplaceTarget(value)
+                    }
+                  >
+                    <SelectTrigger className="w-full sm:w-36">
+                      <SelectValue placeholder="CSV" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="ebay">eBay CSV</SelectItem>
+                      <SelectItem value="facebook">Facebook CSV</SelectItem>
+                      <SelectItem value="etsy">Etsy CSV</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void generateMarketplaceCSV()}
+                    disabled={selectedCount === 0}
+                  >
+                    <Download className="w-4 h-4 mr-2" />
+                    CSV
+                  </Button>
+
                   <Button
                     variant="outline"
                     size="sm"
@@ -379,15 +601,6 @@ export default function Listings() {
                   >
                     <CheckSquare className="w-4 h-4 mr-2" />
                     Mark Listed
-                  </Button>
-                  <Button
-                    variant="hero"
-                    size="sm"
-                    onClick={() => void generateMarketplaceCSV()}
-                    disabled={selectedCount === 0}
-                  >
-                    <Download className="w-4 h-4 mr-2" />
-                    Export {MARKETPLACE_EXPORTS[marketplaceTarget].label} CSV
                   </Button>
                 </div>
               </div>
@@ -399,18 +612,30 @@ export default function Listings() {
             <div className="flex flex-col items-center justify-center py-16">
               <div className="relative w-16 h-16 mb-4">
                 <div className="absolute inset-0 bg-primary/20 blur-xl rounded-full animate-pulse" />
-                <img src="/ispy-logo.png" alt="Loading..." className="relative w-full h-full object-contain animate-pulse" />
+                <img
+                  src="/ispy-logo.png"
+                  alt="Loading..."
+                  className="relative w-full h-full object-contain animate-pulse"
+                />
               </div>
-              <p className="text-muted-foreground mt-4 text-sm">Loading items...</p>
+              <p className="text-muted-foreground mt-4 text-sm">
+                Loading items...
+              </p>
             </div>
           ) : filteredItems.length === 0 ? (
             <Card>
               <CardContent className="text-center py-12">
                 <div className="relative w-24 h-24 mx-auto mb-4">
                   <div className="absolute inset-0 bg-primary/20 blur-xl rounded-full" />
-                  <img src="/ispy-logo.png" alt="No items" className="relative w-full h-full object-contain" />
+                  <img
+                    src="/ispy-logo.png"
+                    alt="No items"
+                    className="relative w-full h-full object-contain"
+                  />
                 </div>
-                <h3 className="font-semibold mb-2">No items ready for listing</h3>
+                <h3 className="font-semibold mb-2">
+                  No items ready for listing
+                </h3>
                 <p className="text-muted-foreground mb-4">
                   Scan items and save them to inventory first
                 </p>
@@ -429,24 +654,31 @@ export default function Listings() {
                   <TableRow>
                     <TableHead className="w-12">
                       <Checkbox
-                        checked={filteredItems.length > 0 && filteredItems.every(i => i.selected)}
+                        checked={
+                          filteredItems.length > 0 &&
+                          filteredItems.every((i) => i.selected)
+                        }
                         onCheckedChange={toggleSelectAll}
                       />
                     </TableHead>
                     <TableHead>Item</TableHead>
-                    <TableHead className="min-w-[200px]">Listing Title</TableHead>
+                    <TableHead className="min-w-[200px]">
+                      Listing Title
+                    </TableHead>
                     <TableHead>Price</TableHead>
-                    <TableHead>Marketplace</TableHead>
                     <TableHead>Condition</TableHead>
                     <TableHead>Market Data</TableHead>
-                    <TableHead className="w-20">Actions</TableHead>
+                    <TableHead className="w-28">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filteredItems.map((item) => {
                     const report = marketReports[item.id];
                     return (
-                      <TableRow key={item.id} className={item.selected ? "bg-primary/5" : ""}>
+                      <TableRow
+                        key={item.id}
+                        className={item.selected ? "bg-primary/5" : ""}
+                      >
                         <TableCell>
                           <Checkbox
                             checked={item.selected}
@@ -482,7 +714,13 @@ export default function Listings() {
                           {editingId === item.id ? (
                             <Input
                               value={item.listingTitle || ""}
-                              onChange={(e) => updateListingField(item.id, "listingTitle", e.target.value)}
+                              onChange={(e) =>
+                                updateListingField(
+                                  item.id,
+                                  "listingTitle",
+                                  e.target.value,
+                                )
+                              }
                               onBlur={() => setEditingId(null)}
                               className="text-sm"
                               maxLength={80}
@@ -493,7 +731,9 @@ export default function Listings() {
                               className="text-sm truncate max-w-[200px] cursor-pointer hover:text-primary"
                               onClick={() => setEditingId(item.id)}
                             >
-                              {item.listingTitle || item.title || "Click to edit..."}
+                              {item.listingTitle ||
+                                item.title ||
+                                "Click to edit..."}
                             </div>
                           )}
                         </TableCell>
@@ -501,42 +741,70 @@ export default function Listings() {
                           <Input
                             type="number"
                             value={item.listingPrice || ""}
-                            onChange={(e) => updateListingField(item.id, "listingPrice", parseFloat(e.target.value) || undefined)}
+                            onChange={(e) =>
+                              updateListingField(
+                                item.id,
+                                "listingPrice",
+                                parseFloat(e.target.value) || undefined,
+                              )
+                            }
                             className="w-24 text-sm"
                             placeholder="0.00"
                             step="0.01"
                           />
                         </TableCell>
                         <TableCell>
-                          <Badge variant="secondary">
-                            {report?.best_marketplace || MARKETPLACE_EXPORTS[marketplaceTarget].label}
+                          <Badge variant="outline">
+                            {item.condition || "Good"}
                           </Badge>
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant="outline">{item.condition || "Good"}</Badge>
                         </TableCell>
                         <TableCell>
                           {report ? (
                             <div className="text-xs space-y-1">
                               <div className="text-muted-foreground">
-                                Range: {formatAudRange(report.low_price, report.high_price, { decimals: 0 })}
+                                Range:{" "}
+                                {formatAudRange(
+                                  report.low_price,
+                                  report.high_price,
+                                  { decimals: 0 },
+                                )}
                               </div>
                               <div className="text-primary font-medium">
-                                Suggested: {formatAud(report.suggested_price ?? report.median_price)}
+                                Suggested:{" "}
+                                {formatAud(
+                                  report.suggested_price ?? report.median_price,
+                                )}
                               </div>
                             </div>
                           ) : (
-                            <span className="text-xs text-muted-foreground">No data</span>
+                            <span className="text-xs text-muted-foreground">
+                              No data
+                            </span>
                           )}
                         </TableCell>
                         <TableCell>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => setEditingId(item.id)}
-                          >
-                            <Edit3 className="w-4 h-4" />
-                          </Button>
+                          <div className="flex items-center gap-1">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              title="AI-generate eBay listing"
+                              onClick={() => handleCreateDraft(item)}
+                              disabled={draftManager.generating}
+                            >
+                              {draftManager.generating ? (
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                              ) : (
+                                <Sparkles className="w-4 h-4" />
+                              )}
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => setEditingId(item.id)}
+                            >
+                              <Edit3 className="w-4 h-4" />
+                            </Button>
+                          </div>
                         </TableCell>
                       </TableRow>
                     );
@@ -546,23 +814,26 @@ export default function Listings() {
             </Card>
           )}
 
-          {/* CSV Format Info */}
+          {/* Info Card */}
           <Card className="mt-6">
             <CardHeader>
               <CardTitle className="text-lg flex items-center gap-2">
                 <FileSpreadsheet className="w-5 h-5 text-primary" />
-                eBay File Exchange Format
+                How it works
               </CardTitle>
             </CardHeader>
             <CardContent>
               <p className="text-sm text-muted-foreground mb-4">
-                eBay exports stay Seller Hub friendly. Facebook Marketplace and Etsy exports produce listing-ready CSV
-                packages that work well on mobile for copy, review, and handoff.
+                Select items and tap "AI List on eBay" — AI generates an
+                optimized title, description, category, and price. Review and
+                edit, then copy to eBay's sell page with one tap. CSV export
+                still available for bulk upload.
               </p>
               <div className="flex flex-wrap gap-2">
+                <Badge variant="secondary">AI titles & descriptions</Badge>
                 <Badge variant="secondary">AUD pricing</Badge>
-                <Badge variant="secondary">Mobile-safe export</Badge>
-                <Badge variant="secondary">eBay CSV</Badge>
+                <Badge variant="secondary">Smart copy to eBay</Badge>
+                <Badge variant="secondary">CSV fallback</Badge>
                 <Badge variant="secondary">Facebook package</Badge>
                 <Badge variant="secondary">Etsy package</Badge>
               </div>
@@ -570,7 +841,35 @@ export default function Listings() {
           </Card>
         </div>
       </PageTransition>
-            <FeedbackWidget context="listings" />
+
+      {/* Draft Editor Modal */}
+      {currentDraft && (
+        <ListingDraftEditor
+          open={editorOpen}
+          onOpenChange={setEditorOpen}
+          draft={currentDraft}
+          item={currentItem}
+          marketReport={currentMarketReport}
+          onSave={handleSaveDraft}
+          onPublish={handlePublishFromEditor}
+          onRegenerate={handleRegenerateDraftField}
+          saving={draftManager.saving}
+          generating={draftManager.generating}
+          ebayConnected={true}
+        />
+      )}
+
+      {/* Smart Copy Modal */}
+      {smartCopyDraft && (
+        <EbaySmartCopy
+          open={smartCopyOpen}
+          onOpenChange={setSmartCopyOpen}
+          draft={smartCopyDraft}
+          onMarkListed={handleMarkListed}
+        />
+      )}
+
+      <FeedbackWidget context="listings" />
     </Layout>
   );
 }
