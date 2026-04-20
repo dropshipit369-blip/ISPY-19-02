@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from "react";
+import React, { useState, useCallback, useMemo, useEffect } from "react";
 import {
   Dialog,
   DialogContent,
@@ -58,6 +58,25 @@ export const EbaySmartCopy: React.FC<EbaySmartCopyProps> = ({
   const [ebayOpened, setEbayOpened] = useState(false);
 
   const conditionLabel = CONDITION_LABELS[draft.condition_id] ?? "Good";
+
+  // Auto-copy title to clipboard when modal opens so user can paste immediately
+  useEffect(() => {
+    if (!open) return;
+    const timer = setTimeout(() => {
+      if (navigator.clipboard?.writeText) {
+        navigator.clipboard
+          .writeText(draft.title)
+          .then(() => {
+            setCopiedFields((prev) => new Set(prev).add("title"));
+            setCurrentStep(1);
+          })
+          .catch(() => {
+            // Clipboard API blocked — user will tap manually
+          });
+      }
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [open, draft.title]);
 
   const specificsText = useMemo(() => {
     return Object.entries(draft.item_specifics)
@@ -124,11 +143,20 @@ export const EbaySmartCopy: React.FC<EbaySmartCopyProps> = ({
     toast.success("All listing details copied!");
   }, [draft, conditionLabel, specificsText, plainDescription, handleCopy]);
 
-  const handleOpenEbay = useCallback(() => {
-    window.open("https://www.ebay.com.au/sell/create", "_blank");
+  const handleOpenEbay = useCallback(async () => {
+    // Auto-copy title first so paste is ready immediately
+    if (!copiedFields.has("title")) {
+      await handleCopy(draft.title, "title");
+    }
+
+    // eBay's prelist flow accepts a title param and kicks off product matching —
+    // this is the closest thing to prefill eBay AU offers without API access.
+    const prelistUrl = `https://www.ebay.com.au/sl/prelist/suggest?title=${encodeURIComponent(draft.title)}`;
+    window.open(prelistUrl, "_blank");
     setEbayOpened(true);
     setCurrentStep(4);
-  }, []);
+    toast.success("Title copied & eBay opened — paste or continue in-page");
+  }, [draft.title, copiedFields, handleCopy]);
 
   const handleDone = useCallback(() => {
     onMarkListed(draft);

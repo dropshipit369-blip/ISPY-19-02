@@ -48,6 +48,7 @@ import { formatAud, formatAudRange } from "@/lib/utils";
 
 import { ListingDraftEditor } from "@/components/listings/ListingDraftEditor";
 import { EbaySmartCopy } from "@/components/listings/EbaySmartCopy";
+import { EbayBatchCsvFlow } from "@/components/listings/EbayBatchCsvFlow";
 import type { ListingDraftData } from "@/hooks/useListingDraft";
 
 interface ListingItem extends Item {
@@ -108,11 +109,15 @@ export default function Listings() {
   const [currentMarketReport, setCurrentMarketReport] =
     useState<MarketReport | null>(null);
 
-  // Smart copy state
+  // Smart copy state (single item)
   const [smartCopyOpen, setSmartCopyOpen] = useState(false);
   const [smartCopyDraft, setSmartCopyDraft] = useState<ListingDraftData | null>(
     null,
   );
+
+  // Batch CSV flow state (multi-item)
+  const [batchCsvOpen, setBatchCsvOpen] = useState(false);
+  const [batchCsvDrafts, setBatchCsvDrafts] = useState<ListingDraftData[]>([]);
 
   useEffect(() => {
     if (user) {
@@ -313,13 +318,13 @@ export default function Listings() {
       return;
     }
 
-    // For single item, go straight to AI generation
+    // Single item → AI generate → edit → smart clipboard flow
     if (selectedCount === 1) {
       await handleCreateDraft(selectedItems[0] as Item);
       return;
     }
 
-    // For batch, generate all drafts then open smart copy for the first one
+    // Multi-item → AI generate all → bulk CSV flow (eBay File Exchange)
     const itemsWithReports = selectedItems.map((item) => ({
       item: item as Item,
       marketReport: marketReports[item.id] ?? null,
@@ -328,20 +333,20 @@ export default function Listings() {
     const drafts = await draftManager.generateBatchDrafts(itemsWithReports);
 
     if (drafts.length > 0) {
-      // Save all drafts
+      // Save all drafts to database
+      const savedDrafts: ListingDraftData[] = [];
       for (const draft of drafts) {
-        await draftManager.saveDraft(draft);
+        const id = await draftManager.saveDraft(draft);
+        if (id) {
+          savedDrafts.push({ ...draft, id });
+        } else {
+          savedDrafts.push(draft);
+        }
       }
 
-      // Open editor for the first one
-      setCurrentDraft(drafts[0]);
-      setCurrentItem(selectedItems[0] as Item);
-      setCurrentMarketReport(marketReports[selectedItems[0].id] ?? null);
-      setEditorOpen(true);
-
-      toast.success(
-        `Generated ${drafts.length} listings. Review each one, then copy to eBay.`,
-      );
+      // Open bulk CSV flow
+      setBatchCsvDrafts(savedDrafts);
+      setBatchCsvOpen(true);
     }
   }, [
     selectedItems,
@@ -350,6 +355,38 @@ export default function Listings() {
     draftManager,
     handleCreateDraft,
   ]);
+
+  // Mark all items in a batch as listed (after CSV download)
+  const handleBatchMarkListed = useCallback(
+    async (drafts: ListingDraftData[]) => {
+      try {
+        const itemIds = drafts.map((d) => d.item_id).filter(Boolean) as string[];
+        if (itemIds.length === 0) return;
+
+        // Update items to listed
+        await supabase
+          .from("items")
+          .update({ status: "listed" })
+          .in("id", itemIds);
+
+        // Update drafts to published
+        const draftIds = drafts.map((d) => d.id).filter(Boolean) as string[];
+        if (draftIds.length > 0) {
+          await supabase
+            .from("listing_drafts")
+            .update({ status: "published" })
+            .in("id", draftIds);
+        }
+
+        toast.success(`Marked ${itemIds.length} items as listed on eBay`);
+        fetchData();
+      } catch (err) {
+        console.error("Error marking batch as listed:", err);
+        toast.error("Failed to update item statuses");
+      }
+    },
+    [],
+  );
 
   // === CSV EXPORT (fallback) ===
 
@@ -511,11 +548,67 @@ export default function Listings() {
             </div>
           </motion.div>
 
-          {/* Action Bar */}
+          {/* HERO: AI List on eBay — dominant primary CTA */}
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mb-6"
+          >
+            <Card className="bg-gradient-to-br from-primary/10 via-primary/5 to-transparent border-primary/30 overflow-hidden relative">
+              <div className="absolute inset-0 bg-gradient-to-r from-primary/5 to-transparent pointer-events-none" />
+              <CardContent className="p-5 relative">
+                <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
+                  <div className="flex items-center gap-4">
+                    <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-primary to-primary/60 flex items-center justify-center shadow-lg shadow-primary/30 flex-shrink-0">
+                      <Sparkles className="w-7 h-7 text-primary-foreground" />
+                    </div>
+                    <div className="min-w-0">
+                      <h2 className="text-lg sm:text-xl font-bold leading-tight">
+                        AI List on eBay Australia
+                      </h2>
+                      <p className="text-sm text-muted-foreground mt-0.5">
+                        {selectedCount === 0
+                          ? "Select items — AI writes titles, descriptions, specifics & categories"
+                          : selectedCount === 1
+                            ? "1 item ready → AI generates → review → copy-paste to eBay"
+                            : `${selectedCount} items → AI generates all → bulk CSV for eBay File Exchange`}
+                      </p>
+                    </div>
+                  </div>
+
+                  <Button
+                    variant="hero"
+                    size="lg"
+                    onClick={handleBatchList}
+                    disabled={selectedCount === 0 || draftManager.generating}
+                    className="w-full lg:w-auto h-14 px-8 text-base font-semibold shadow-lg shadow-primary/30"
+                  >
+                    {draftManager.generating ? (
+                      <>
+                        <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                        Generating with AI...
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-5 h-5 mr-2" />
+                        {selectedCount === 0
+                          ? "List on eBay"
+                          : selectedCount === 1
+                            ? "AI Generate & List"
+                            : `Bulk List ${selectedCount} on eBay`}
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          </motion.div>
+
+          {/* Secondary Action Bar: filters + export */}
           <Card className="mb-6">
             <CardContent className="p-4">
-              <div className="flex flex-col lg:flex-row gap-4 items-start lg:items-center justify-between">
-                <div className="flex flex-col sm:flex-row gap-4 flex-1 w-full lg:w-auto">
+              <div className="flex flex-col lg:flex-row gap-3 items-start lg:items-center justify-between">
+                <div className="flex flex-col sm:flex-row gap-3 flex-1 w-full lg:w-auto">
                   <div className="relative flex-1">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                     <Input
@@ -548,25 +641,6 @@ export default function Listings() {
                     {selectedCount} selected
                   </Badge>
 
-                  {/* Primary: AI List on eBay */}
-                  <Button
-                    variant="hero"
-                    size="sm"
-                    onClick={handleBatchList}
-                    disabled={
-                      selectedCount === 0 || draftManager.generating
-                    }
-                  >
-                    {draftManager.generating ? (
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    ) : (
-                      <Sparkles className="w-4 h-4 mr-2" />
-                    )}
-                    {draftManager.generating
-                      ? "Generating..."
-                      : "AI List on eBay"}
-                  </Button>
-
                   {/* CSV Export (fallback) */}
                   <Select
                     value={marketplaceTarget}
@@ -574,7 +648,7 @@ export default function Listings() {
                       setMarketplaceTarget(value)
                     }
                   >
-                    <SelectTrigger className="w-full sm:w-36">
+                    <SelectTrigger className="w-full sm:w-32">
                       <SelectValue placeholder="CSV" />
                     </SelectTrigger>
                     <SelectContent>
@@ -859,13 +933,23 @@ export default function Listings() {
         />
       )}
 
-      {/* Smart Copy Modal */}
+      {/* Smart Copy Modal (single item) */}
       {smartCopyDraft && (
         <EbaySmartCopy
           open={smartCopyOpen}
           onOpenChange={setSmartCopyOpen}
           draft={smartCopyDraft}
           onMarkListed={handleMarkListed}
+        />
+      )}
+
+      {/* Bulk CSV Flow (multi-item via eBay File Exchange) */}
+      {batchCsvDrafts.length > 0 && (
+        <EbayBatchCsvFlow
+          open={batchCsvOpen}
+          onOpenChange={setBatchCsvOpen}
+          drafts={batchCsvDrafts}
+          onMarkListed={handleBatchMarkListed}
         />
       )}
 
